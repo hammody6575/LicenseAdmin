@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>License Manager</title>
+
+<style>
+*{box-sizing:border-box}
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0b0b0f;color:#fff}
+button,input{font:inherit}
+.login{min-height:100vh;display:flex;align-items:center;justify-content:center}
+.login-box{width:360px;padding:32px;background:#15151c;border:1px solid #292933;border-radius:18px}
+h1{margin-top:0}
+p{color:#999}
+input{width:100%;padding:13px;border-radius:10px;border:1px solid #333;background:#0d0d12;color:#fff;outline:none}
+button{border:0;border-radius:10px;padding:11px 16px;cursor:pointer}
+.login-btn{width:100%;margin-top:14px;background:#fff;color:#000;font-weight:600}
+.error{color:#ff5f5f;margin-top:12px;display:none}
+#app{display:none}
+header{padding:24px 32px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #222}
+.logout{background:#24242d;color:#fff}
+.container{padding:28px 32px}
+.top{display:flex;gap:12px;margin-bottom:20px}
+.search{flex:1}
+.create{background:#fff;color:#000;font-weight:600}
+table{width:100%;border-collapse:collapse;background:#15151c}
+th,td{padding:15px;text-align:left;border-bottom:1px solid #25252d}
+th{color:#999;font-size:13px}
+.badge{padding:5px 9px;border-radius:999px;font-size:12px}
+.active{background:#17351f;color:#5cff87}
+.expired{background:#392d16;color:#ffc857}
+.revoked{background:#39191c;color:#ff656d}
+.actions button{margin-right:6px;background:#25252e;color:#fff}
+.modal{display:none;position:fixed;inset:0;background:#000a;align-items:center;justify-content:center}
+.modal-box{width:400px;background:#15151c;border:1px solid #292933;border-radius:18px;padding:28px}
+.modal-box label{display:block;margin:15px 0 7px;color:#aaa}
+.modal-buttons{margin-top:22px;display:flex;justify-content:flex-end;gap:10px}
+.cancel{background:#292932;color:#fff}
+.save{background:#fff;color:#000}
+</style>
+</head>
+
+<body>
+
+<div id="login" class="login">
+<div class="login-box">
+<h1>License Manager</h1>
+<p>Enter your admin secret to continue.</p>
+
+<input id="password"
+type="password"
+placeholder="Admin secret"
+onkeydown="if(event.key==='Enter')login()">
+
+<button class="login-btn" onclick="login()">Login</button>
+
+<div id="loginError" class="error"></div>
+</div>
+</div>
+
+<div id="app">
+
+<header>
+<h1>License Manager</h1>
+<button class="logout" onclick="logout()">Logout</button>
+</header>
+
+<div class="container">
+
+<div class="top">
+<input id="search"
+class="search"
+placeholder="Search licenses..."
+oninput="render()">
+
+<button class="create" onclick="openCreate()">
++ Create License
+</button>
+</div>
+
+<table>
+<thead>
+<tr>
+<th>License Key</th>
+<th>Expiration</th>
+<th>Status</th>
+<th>Actions</th>
+</tr>
+</thead>
+
+<tbody id="licenses"></tbody>
+</table>
+
+</div>
+</div>
+
+<div id="modal" class="modal">
+<div class="modal-box">
+
+<h2 id="modalTitle">Create License</h2>
+
+<label>License Key</label>
+<input id="key">
+
+<label>Expiration</label>
+<input id="expires" type="datetime-local">
+
+<div class="modal-buttons">
+<button class="cancel" onclick="closeModal()">Cancel</button>
+<button class="save" onclick="saveLicense()">Save</button>
+</div>
+
+</div>
+</div>
+
+<script>
+
+const SUPABASE_URL =
+"https://zuqmwjjroctlnmazgmut.supabase.co/functions/v1/license-admin";
+
+let adminSecret = "";
+let licenses = [];
+let editingId = null;
+
+async function api(body){
+
+const res = await fetch(SUPABASE_URL,{
+method:"POST",
+headers:{
+"Content-Type":"application/json",
+"x-admin-secret":adminSecret
+},
+body:JSON.stringify(body)
+});
+
+return await res.json();
+}
+
+async function login(){
+
+const password=document.getElementById("password").value.trim();
+const error=document.getElementById("loginError");
+
+if(!password){
+error.textContent="Enter your admin secret.";
+error.style.display="block";
+return;
+}
+
+adminSecret=password;
+
+try{
+
+const data=await api({action:"list"});
+
+if(data.error){
+
+adminSecret="";
+error.textContent="Invalid admin secret.";
+error.style.display="block";
+return;
+
+}
+
+document.getElementById("login").style.display="none";
+document.getElementById("app").style.display="block";
+
+licenses=data.licenses||[];
+render();
+
+}catch(e){
+
+adminSecret="";
+error.textContent="Connection failed.";
+error.style.display="block";
+
+}
+}
+
+function logout(){
+
+adminSecret="";
+licenses=[];
+
+document.getElementById("app").style.display="none";
+document.getElementById("login").style.display="flex";
+document.getElementById("password").value="";
+
+}
+
+function render(){
+
+const search=document.getElementById("search").value.toLowerCase();
+
+const filtered=licenses.filter(x =>
+x.license_key.toLowerCase().includes(search)
+);
+
+const tbody=document.getElementById("licenses");
+
+tbody.innerHTML="";
+
+filtered.forEach(x=>{
+
+const expired=new Date(x.expires_at)<=new Date();
+
+let status="Active";
+let cls="active";
+
+if(x.revoked){
+status="Revoked";
+cls="revoked";
+}else if(expired){
+status="Expired";
+cls="expired";
+}
+
+const tr=document.createElement("tr");
+
+tr.innerHTML=`
+<td>${escapeHtml(x.license_key)}</td>
+
+<td>${new Date(x.expires_at).toLocaleString()}</td>
+
+<td>
+<span class="badge ${cls}">${status}</span>
+</td>
+
+<td class="actions">
+
+<button onclick="copyKey('${escapeAttr(x.license_key)}')">
+Copy
+</button>
+
+<button onclick="openEdit('${x.id}')">
+Edit
+</button>
+
+<button onclick="toggleRevoke('${x.id}',${!x.revoked})">
+${x.revoked?"Unrevoke":"Revoke"}
+</button>
+
+<button onclick="deleteLicense('${x.id}')">
+Delete
+</button>
+
+</td>
+`;
+
+tbody.appendChild(tr);
+
+});
+
+}
+
+function openCreate(){
+
+editingId=null;
+
+document.getElementById("modalTitle").textContent="Create License";
+document.getElementById("key").value="";
+document.getElementById("expires").value="";
+document.getElementById("modal").style.display="flex";
+
+}
+
+function openEdit(id){
+
+const x=licenses.find(l=>l.id===id);
+
+if(!x)return;
+
+editingId=id;
+
+document.getElementById("modalTitle").textContent="Edit License";
+document.getElementById("key").value=x.license_key;
+
+const d=new Date(x.expires_at);
+
+const local=new Date(
+d.getTime()-d.getTimezoneOffset()*60000
+).toISOString().slice(0,16);
+
+document.getElementById("expires").value=local;
+document.getElementById("modal").style.display="flex";
+
+}
+
+function closeModal(){
+
+document.getElementById("modal").style.display="none";
+
+}
+
+async function saveLicense(){
+
+const key=document.getElementById("key").value.trim();
+const expires=document.getElementById("expires").value;
+
+if(!key||!expires){
+alert("Enter both the license key and expiration.");
+return;
+}
+
+const body={
+action:editingId?"edit":"create",
+license_key:key,
+expires_at:new Date(expires).toISOString()
+};
+
+if(editingId)body.id=editingId;
+
+const data=await api(body);
+
+if(data.error){
+alert(data.error);
+return;
+}
+
+closeModal();
+await load();
+
+}
+
+async function load(){
+
+const data=await api({action:"list"});
+
+if(data.error){
+
+alert(data.error);
+logout();
+return;
+
+}
+
+licenses=data.licenses||[];
+render();
+
+}
+
+async function toggleRevoke(id,revoked){
+
+const data=await api({
+action:"revoke",
+id:id,
+revoked:revoked
+});
+
+if(data.error){
+alert(data.error);
+return;
+}
+
+await load();
+
+}
+
+async function deleteLicense(id){
+
+if(!confirm("Delete this license permanently?"))return;
+
+const data=await api({
+action:"delete",
+id:id
+});
+
+if(data.error){
+alert(data.error);
+return;
+}
+
+await load();
+
+}
+
+async function copyKey(key){
+
+await navigator.clipboard.writeText(key);
+alert("License key copied.");
+
+}
+
+function escapeHtml(text){
+
+const div=document.createElement("div");
+div.textContent=text;
+return div.innerHTML;
+
+}
+
+function escapeAttr(text){
+
+return text.replace(/'/g,"&#39;");
+
+}
+
+</script>
+
+</body>
+</html>
